@@ -11,25 +11,30 @@ import argparse
 import asyncio
 import functools
 import json
+import logging
 import requests
 import socket
 import sys
-from urllib.parse import urlparse
+import time
 
 
 DEFAULT_KIBANA_BASE_URL = 'http://localhost:5601'
 
 
-def wait_for_port(host, port):
-  s = socket.socket()
+def wait_for_green_status(kibana_base_url):
+  s = requests.session() # HTTP session for keep-alive
+
   while True:
     try:
-      s.connect((host, port))
-    except ConnectionError:
-      pass
-    else:
-      break
-  s.close()
+      r = s.get(kibana_base_url + '/api/status')
+      r.raise_for_status()
+      status = r.json()['status']['overall']['state']
+      if status == 'green':
+        break
+      logging.debug('Kibana status is not green (is: {}), retrying...'.format(status))
+    except requests.exceptions.ConnectionError:
+      logging.debug('Kibana is not reachable, retrying...')
+    time.sleep(0.1)
 
 
 async def upload_kibana_saved_json(kibana_base_url, jsonArray):
@@ -71,16 +76,19 @@ def main():
     formatter_class=argparse.RawDescriptionHelpFormatter)
   parser.add_argument('--json', metavar='export.json', type=argparse.FileType('r'), default=sys.stdin, help='The Kibana JSON export file to import')
   parser.add_argument('--kibana-url', metavar=DEFAULT_KIBANA_BASE_URL, type=str, default=DEFAULT_KIBANA_BASE_URL, help='Kibana base URL (default ' + DEFAULT_KIBANA_BASE_URL + ')')
-  parser.add_argument('--wait', action='store_true', help='Wait indefinitely for Kibana port to be up')
+  parser.add_argument('--wait', action='store_true', help='Wait indefinitely for Kibana port to up with status green')
+  parser.add_argument('-v', '--verbose', action='store_true', help='increase output verbosity')
   args = parser.parse_args()
+
+  if args.verbose:
+    logging.basicConfig(level=logging.DEBUG)
 
   # Load JSON file; it contains an array of objects, whose _type field
   # determines what it is and which endpoint we have to hit.
   jsonArray = json.load(args.json)
 
   if args.wait:
-    url = urlparse(args.kibana_url)
-    wait_for_port(url.hostname, url.port)
+    wait_for_green_status(args.kibana_url)
 
   asyncio.get_event_loop().run_until_complete(upload_kibana_saved_json(args.kibana_url, jsonArray))
 
