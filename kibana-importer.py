@@ -12,10 +12,24 @@ import asyncio
 import functools
 import json
 import requests
+import socket
 import sys
+from urllib.parse import urlparse
 
 
 DEFAULT_KIBANA_BASE_URL = 'http://localhost:5601'
+
+
+def wait_for_port(host, port):
+  s = socket.socket()
+  while True:
+    try:
+      s.connect((host, port))
+    except ConnectionError:
+      pass
+    else:
+      break
+  s.close()
 
 
 async def upload_kibana_saved_json(kibana_base_url, jsonArray):
@@ -57,11 +71,16 @@ def main():
     formatter_class=argparse.RawDescriptionHelpFormatter)
   parser.add_argument('--json', metavar='export.json', type=argparse.FileType('r'), default=sys.stdin, help='The Kibana JSON export file to import')
   parser.add_argument('--kibana-url', metavar=DEFAULT_KIBANA_BASE_URL, type=str, default=DEFAULT_KIBANA_BASE_URL, help='Kibana base URL (default ' + DEFAULT_KIBANA_BASE_URL + ')')
+  parser.add_argument('--wait', action='store_true', help='Wait indefinitely for Kibana port to be up')
   args = parser.parse_args()
 
   # Load JSON file; it contains an array of objects, whose _type field
   # determines what it is and which endpoint we have to hit.
   jsonArray = json.load(args.json)
+
+  if args.wait:
+    url = urlparse(args.kibana_url)
+    wait_for_port(url.hostname, url.port)
 
   asyncio.get_event_loop().run_until_complete(upload_kibana_saved_json(args.kibana_url, jsonArray))
 
