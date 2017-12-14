@@ -36,6 +36,38 @@ def wait_for_green_status(kibana_base_url):
       logging.debug('Kibana is not reachable, retrying...')
     time.sleep(0.1)
 
+def get_default_index(kibana_base_url):
+  """Retrieve the default index from kibana."""
+  try:
+    s = requests.session() # HTTP session for keep-alive
+    r = s.get(kibana_base_url + '/api/kibana/settings')
+    r.raise_for_status()
+    defidx = r.json()['settings']['defaultIndex']['userValue']
+    logging.debug("Found current defaultIndex=" + defidx)
+    return defidx
+  except:
+    return ""
+
+def get_old_default_index(objs):
+  """Assumption: all the saved searches and visualizations refer to the defaultIndex (eg, logstash-*)
+then we can find out what its ID was by looking at the first one found."""
+  for obj in objs:
+    try:
+      found = str(json.loads(obj["_source"]["kibanaSavedObjectMeta"]["searchSourceJSON"])["index"])
+      logging.debug("Found old defaultIndex=" + found)
+      return found
+    except:
+      pass
+  return ""
+
+def replace_id(obj, old, new):
+  """Replace an id only in the stringified portion of the object"""
+  try:
+    str = obj["_source"]["kibanaSavedObjectMeta"]["searchSourceJSON"]
+    obj["_source"]["kibanaSavedObjectMeta"]["searchSourceJSON"] = str.replace(old, new)
+    return obj
+  except:
+    return obj
 
 async def upload_kibana_saved_json(kibana_base_url, jsonArray):
   eventloop = asyncio.get_event_loop()
@@ -69,6 +101,9 @@ async def upload_kibana_saved_json(kibana_base_url, jsonArray):
     response.raise_for_status()
 
 
+def compute_ids(objs):
+  pass
+
 def main():
   parser = argparse.ArgumentParser(
     description='Imports a Kibana export.json file into Kibana via its REST API.\n\nExample:\n  {} --json export.json --kibana-url {}'.format(sys.argv[0], DEFAULT_KIBANA_BASE_URL),
@@ -77,6 +112,7 @@ def main():
   parser.add_argument('--json', metavar='export.json', type=argparse.FileType('r'), default=sys.stdin, help='The Kibana JSON export file to import')
   parser.add_argument('--kibana-url', metavar=DEFAULT_KIBANA_BASE_URL, type=str, default=DEFAULT_KIBANA_BASE_URL, help='Kibana base URL (default ' + DEFAULT_KIBANA_BASE_URL + ')')
   parser.add_argument('--wait', action='store_true', help='Wait indefinitely for Kibana port to up with status green')
+  parser.add_argument('--fix-idx', action='store_true', help='Attempt to map old defaultIndex ID to the one in the running kibana.')
   parser.add_argument('-v', '--verbose', action='store_true', help='increase output verbosity')
   args = parser.parse_args()
 
@@ -90,8 +126,16 @@ def main():
   if args.wait:
     wait_for_green_status(args.kibana_url)
 
-  asyncio.get_event_loop().run_until_complete(upload_kibana_saved_json(args.kibana_url, jsonArray))
+  if args.fix_idx:
+    newidx = get_default_index(args.kibana_url)
+    oldidx = get_old_default_index(jsonArray)
 
+    if (oldidx != "" and oldidx != ""):
+      jsonArray = [replace_id(x, oldidx, newidx) for x in jsonArray]
+    else:
+      print ("Did not find old index. ID's will be broken.")
+
+    asyncio.get_event_loop().run_until_complete(upload_kibana_saved_json(args.kibana_url, jsonArray))
 
 if __name__ == '__main__':
   main()
