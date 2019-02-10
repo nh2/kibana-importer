@@ -1,12 +1,9 @@
 #!/usr/bin/env python3
-
 # Imports a Kibana export.json file into Kibana, as created via the
 # 'Export Everything' button.
 # Aims to have the same behaviour as the 'Import' button next to it.
-
 # Dependencies:
 # * `requests`
-
 import argparse
 import asyncio
 import functools
@@ -16,14 +13,9 @@ import requests
 import socket
 import sys
 import time
-
-
 DEFAULT_KIBANA_BASE_URL = 'http://localhost:5601'
-
-
 def wait_for_green_status(kibana_base_url):
   s = requests.session() # HTTP session for keep-alive
-
   while True:
     try:
       r = s.get(kibana_base_url + '/api/status')
@@ -35,14 +27,13 @@ def wait_for_green_status(kibana_base_url):
     except requests.exceptions.ConnectionError:
       logging.debug('Kibana is not reachable, retrying...')
     time.sleep(0.1)
-
-
-async def upload_kibana_saved_json(kibana_base_url, jsonArray):
+async def upload_kibana_saved_json(kibana_base_url, jsonArray, username, password):
   eventloop = asyncio.get_event_loop()
-
   s = requests.session() # HTTP session for keep-alive
   futures = []
-
+  # Check if user and password defined - if so import into session.
+  if(username and password):
+    s.auth = (username, password)
   for obj in jsonArray:
     typ = obj['_type']
     if typ not in ['dashboard', 'search', 'visualization']:
@@ -51,7 +42,6 @@ async def upload_kibana_saved_json(kibana_base_url, jsonArray):
     else:
       # All `typ` cases we handle above happen to have _id and _source fields.
       id = obj['_id']
-
       print('Processing {}: {}'.format(typ, id))
 
       data = {'attributes': obj['_source']}
@@ -74,6 +64,8 @@ def main():
     description='Imports a Kibana export.json file into Kibana via its REST API.\n\nExample:\n  {} --json export.json --kibana-url {}'.format(sys.argv[0], DEFAULT_KIBANA_BASE_URL),
     epilog='This is Free Software under the MIT license.\nCopyright 2017 Niklas Hambuechen <mail@nh2.me>',
     formatter_class=argparse.RawDescriptionHelpFormatter)
+  parser.add_argument('--usr', type=str, default=None, help='Optional: username for Kibana authentication')
+  parser.add_argument('--pwd', type=str, default=None, help='Optional: password for Kibana authenticaion')
   parser.add_argument('--json', metavar='export.json', type=argparse.FileType('r'), default=sys.stdin, help='The Kibana JSON export file to import')
   parser.add_argument('--kibana-url', metavar=DEFAULT_KIBANA_BASE_URL, type=str, default=DEFAULT_KIBANA_BASE_URL, help='Kibana base URL (default ' + DEFAULT_KIBANA_BASE_URL + ')')
   parser.add_argument('--wait', action='store_true', help='Wait indefinitely for Kibana port to up with status green')
@@ -89,9 +81,9 @@ def main():
 
   if args.wait:
     wait_for_green_status(args.kibana_url)
-
-  asyncio.get_event_loop().run_until_complete(upload_kibana_saved_json(args.kibana_url, jsonArray))
+  
+  asyncio.get_event_loop().run_until_complete(upload_kibana_saved_json(args.kibana_url, jsonArray, args.usr, args.pwd))
 
 
 if __name__ == '__main__':
-  main()
+    main()
